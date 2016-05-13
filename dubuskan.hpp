@@ -200,9 +200,9 @@ public:
     std::set<Cluster<dims, T>*> find_clusters(DataPoint<dims, T> &p)
     {
         long span = max_dist/cell_side_length;
-        std::array<size_t, dims> cell_loc = to_lattice(p.vec);
         // Round the coordinates to get a cell location in terms of
         // the cell side lengths
+        std::array<size_t, dims> cell_loc = to_lattice(p.vec);
         // Get all the neighboring cells. This means for each dimension,
         // we get the previous and next coordinate for a total of 3,
         // and all the possible choices form a square in 2 dimensions,
@@ -215,7 +215,6 @@ public:
                 opts[dim].push_back(cell_loc[dim] + offset);
             }
         }
-        // Get neighbors (defined by span)
         auto neighbors = cartesian_product(opts, 2 * span + 1);
         std::set<Cluster<dims, T>*> result;
         for (auto &neighbor : neighbors)
