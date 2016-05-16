@@ -5,13 +5,11 @@
 
 #include <string>
 #include <set>
-#include <map>
 #include <deque>
 #include <algorithm>
 #include <array>
 #include <iostream>
 #include <vector>
-#include <stack>
 #include <cmath>
 #include <unordered_map>
 #include <sstream>
@@ -50,26 +48,29 @@ SpaceType struct DataPoint
 
 SpaceType struct Cluster
 {
-    std::deque<DataPoint<dims, T>> points;
+    std::deque<DataPoint<dims, T>*> points;
 
     Cluster() {}
 
-    void add(DataPoint<dims, T> p)
+    void add(DataPoint<dims, T> *p)
     {
         points.push_back(p);
     }    
 };
 
-SpaceType class Cell
+SpaceType struct Cell
 {
-private:
     std::deque<DataPoint<dims, T>> data;
 
-    bool can_host(DataPoint<dims, T> p, double dist, Cluster<dims, T>** c)
+    bool can_host(DataPoint<dims, T> p, 
+                  double dist,
+                  Cluster<dims, T>** c,
+                  long &count)
     {
         return std::any_of(data.begin(), data.end(),
-            [&c, &p, &dist, this] (DataPoint<dims, T> cell_point)
+            [&c, &p, &dist, &count, this] (DataPoint<dims, T> cell_point)
             {
+                count++;
                 if (p.can_reach(&cell_point, dist))
                 {
                     *c = cell_point.cluster;
@@ -80,7 +81,6 @@ private:
         );
     }
 
-public:
     Cell() {}
 
     void add(DataPoint<dims, T> p)
@@ -88,10 +88,10 @@ public:
         data.push_back(p);
     }
 
-    Cluster<dims, T>* find_cluster(DataPoint<dims, T> p, double dist)
+    Cluster<dims, T>* find_cluster(DataPoint<dims, T> p, double dist, long &count)
     {
         Cluster<dims, T>* cluster;
-        if (can_host(p, dist, &cluster))
+        if (can_host(p, dist, &cluster, count))
         {
             return cluster;
         }
@@ -107,16 +107,10 @@ SpaceType class Space
 private:
     double max_dist;
     double cell_side_length;
-    double average_pts;
-    long total_pts;
-    long cell_count_target;
+    long last_search_count;
+    long search_count_target;
     std::unordered_map<std::string, Cell<dims, T>> cells;
     
-    void recompute_average()
-    {
-        average_pts = (double)total_pts / (double)cells.size();
-    }
-
     std::array<size_t, dims> to_lattice(std::array<double, dims> &arr)
     {
         std::array<size_t, dims> floored;
@@ -129,11 +123,10 @@ private:
         return floored; 
     }
 
-    std::string make_key(std::array<double, dims> &arr)
+    std::string make_key(std::array<size_t, dims> &arr)
     {
-        auto floored = to_lattice(arr);
         std::ostringstream oss;
-        for (auto &coord : floored)
+        for (auto &coord : arr)
         {
             oss << " " << coord;
         }
@@ -145,25 +138,66 @@ private:
         cells[key].add(p);
     }
 
+    void divide_grid()
+    {
+        double excess_ratio =
+            (double)last_search_count / (double)search_count_target;
+        while (excess_ratio > 1.0)
+        {
+            cell_side_length /= 2.0;
+            excess_ratio /= pow(2.0, dims);
+        }
+        std::cout << "New cell side length: " << cell_side_length;
+        std::cout << " - reassigning points..." << std::endl;
+        std::unordered_map<std::string, Cell<dims, T>> tmp;
+        for (auto &cell : cells) 
+        {
+            for (auto &point : cell.second.data)
+            {
+                auto lat = to_lattice(point.vec);
+                std::string key = make_key(lat);
+                if (!tmp.count(key))
+                {
+                    Cell<dims, T> c;
+                    tmp[key] = c;
+                }
+                tmp[key].add(point);
+            }   
+        } 
+        std::swap(tmp, cells);
+        std::cout << "Cell reassignment complete" << std::endl;
+    }
+
 
 public:
     std::vector<Cluster<dims, T>*> clusters;
 
-    Space(long cell_count_target, double cell_side_length, double max_dist) 
+    Space(long search_count_target, double cell_side_length, double max_dist) 
     {
+        last_search_count = 0;
         this->max_dist = max_dist;
-        this->cell_count_target = cell_count_target;
+        this->search_count_target = search_count_target;
         this->cell_side_length = cell_side_length;
-        std::array<double, dims> zero{};
+        std::array<size_t, dims> zero{};
         Cell<dims, T> cell;
+        std::string key = make_key(zero);
         cells[make_key(zero)] = cell;
     }
 
-    std::vector<std::array<double, dims>> cartesian_product(size_2D opts, long n)
+    ~Space()
     {
+        for (size_t i = 0; i < clusters.size(); i++)
+        {
+            delete clusters[i];
+        }
+    }
+
+    std::vector<std::array<size_t, dims>> outer_product(size_2D opts, long n)
+    {
+        
         long num_neighbors = std::pow(n, opts.size());
         // Avoid a resize by computing the needed number of elements
-        std::vector<std::array<double, dims>> neighbors(num_neighbors);
+        std::vector<std::array<size_t, dims>> neighbors(num_neighbors);
         std::vector<std::vector<size_t>::iterator> iterators;
         for (auto &a : opts) 
         {
@@ -173,7 +207,7 @@ public:
         size_t idx = 0;
         while (!flag)
         {
-            std::array<double, dims> neighbor;
+            std::array<size_t, dims> neighbor;
             std::transform(iterators.begin(), iterators.end(), neighbor.begin(),
                     [] (std::vector<size_t>::iterator it)
                     {
@@ -212,43 +246,52 @@ public:
         {
             for (long offset = -span; offset <= span; offset++)
             {
-                opts[dim].push_back(cell_loc[dim] + offset);
+                long coord = cell_loc[dim] + offset;
+                if (coord < 0)
+                    coord = 0;
+                opts[dim].push_back(coord);
             }
         }
-        auto neighbors = cartesian_product(opts, 2 * span + 1);
+        auto neighbors = outer_product(opts, 2 * span + 1);
         std::set<Cluster<dims, T>*> result;
+        std::set<std::string> searched;
+        last_search_count = 0;
         for (auto &neighbor : neighbors)
         {
             std::string key = make_key(neighbor);
-            if (cells.count(key))
+            if (cells.count(key) && !searched.count(key))
             {
+                searched.insert(key);
                 auto cell = cells[key];
                 Cluster<dims, T>* cluster;
-                if ((cluster = cell.find_cluster(p, max_dist)) != nullptr)
+                long count = 0;
+                if ((cluster = cell.find_cluster(p, max_dist, count)) != nullptr)
                 {
                     result.insert(cluster);
                 }
+                last_search_count += count;
             }     
         }
         return result;   
     }
 
-    void add(DataPoint<dims, T> &p)
+    long add(DataPoint<dims, T> &p)
     {
-        std::string key = make_key(p.vec);
+        auto lat = to_lattice(p.vec);
+        std::string key = make_key(lat);
         std::set<Cluster<dims, T>*> found = find_clusters(p);
         Cluster<dims, T>* cluster = new Cluster<dims, T>();
         switch (found.size())
         {
             case 0:
-                cluster->add(p);
+                cluster->add(&p);
                 p.cluster = cluster;
                 clusters.push_back(cluster);
                 break;
             case 1:
                 delete cluster;
-                cluster = *clusters.begin();
-                cluster->add(p);
+                cluster = *found.begin();
+                cluster->add(&p);
                 p.cluster = cluster;
                 break;
             default:
@@ -257,13 +300,21 @@ public:
                     for (auto &pt : it->points)
                     {
                         cluster->add(pt);
-                        pt.cluster = cluster;
+                        pt->cluster = cluster;
                     }
                     delete it;
                 }
                 clusters.push_back(cluster); 
         }
         cells[key].add(p);
+        if (last_search_count > search_count_target && cell_side_length > 2*max_dist)
+        {
+            std::cout << "Search count: " << last_search_count;
+            std::cout << " - Target: " << search_count_target;
+            std::cout << " - Dividing..." << std::endl;
+            divide_grid();
+        }
+        return last_search_count;
     }
 
 };
