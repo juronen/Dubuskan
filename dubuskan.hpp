@@ -3,7 +3,7 @@
 
 #define SpaceType template <size_t dims, typename T>
 
-#include <limits>
+#include <list>
 #include <memory>
 #include <string>
 #include <set>
@@ -38,7 +38,7 @@ SpaceType struct DataPoint
     template<class... Vec>
     DataPoint(T d, Vec... v) : vec{v...}, flag(false), data(d) {}
 
-    double fast_distance(SharedData<dims, T> d)
+    double fast_distance(SharedData<dims, T> &d)
     {
         double sum = 0;
         for (size_t i = 0; i < dims; i++)
@@ -49,7 +49,7 @@ SpaceType struct DataPoint
         return sum;
     }
 
-    bool can_reach(SharedData<dims, T> d, double& dist) 
+    bool can_reach(SharedData<dims, T> &d, double& dist) 
     {
         return fast_distance(d) <= dist;     
     }    
@@ -60,27 +60,27 @@ SpaceType struct Cluster
 
     long id;
 
-    std::deque<SharedData<dims, T>> points;
+    std::list<SharedData<dims, T>> points;
 
     Cluster(long uid) : id(uid) {}
 
     void add(SharedData<dims, T> p)
     {
-        points.push_back(p);
+        points.push_front(p);
     }    
 };
 
 SpaceType struct Cell
 {
-    std::deque<SharedData<dims, T>> data;
+    std::list<SharedData<dims, T>> data;
 
-    bool can_host(SharedData<dims, T> p, 
+    bool can_host(SharedData<dims, T> &p, 
                   double dist,
                   Cluster<dims, T>* &c,
                   long &count)
     {
         return std::any_of(data.begin(), data.end(),
-            [&c, &p, &dist, &count, this] (SharedData<dims, T> cell_point)
+            [&c, &p, &dist, &count, this] (SharedData<dims, T> &cell_point)
             {
                 count++;
                 if (p->can_reach(cell_point, dist))
@@ -97,7 +97,7 @@ SpaceType struct Cell
 
     void add(SharedData<dims, T> p)
     {
-        data.push_back(p);
+        data.push_front(p);
     }
 
     Cluster<dims, T>* find_cluster(SharedData<dims, T> p, double dist, long &count)
