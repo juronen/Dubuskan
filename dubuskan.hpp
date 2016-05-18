@@ -3,6 +3,8 @@
 
 #define SpaceType template <size_t dims, typename T>
 
+#include <limits>
+#include <memory>
 #include <string>
 #include <set>
 #include <deque>
@@ -15,21 +17,28 @@
 #include <sstream>
 
 using std::size_t;
+using std::shared_ptr;
+using std::make_shared;
 
 SpaceType struct Cluster;
+SpaceType struct DataPoint;
+
+template<size_t dims, typename T> 
+using SharedData = shared_ptr<DataPoint<dims, T>>;
 
 SpaceType struct DataPoint
 {
     Cluster<dims, T>* cluster;
+    bool flag;
     T data;
     std::array<double, dims> vec;
 
     DataPoint(T d) : data(d) {}
        
     template<class... Vec>
-    DataPoint(T d, Vec... v) : vec{v...}, data(d) {}
+    DataPoint(T d, Vec... v) : vec{v...}, flag(false), data(d) {}
 
-    double fast_distance(DataPoint* d)
+    double fast_distance(SharedData<dims, T> d)
     {
         double sum = 0;
         for (size_t i = 0; i < dims; i++)
@@ -40,7 +49,7 @@ SpaceType struct DataPoint
         return sum;
     }
 
-    bool can_reach(DataPoint* d, double& dist) 
+    bool can_reach(SharedData<dims, T> d, double& dist) 
     {
         return fast_distance(d) <= dist;     
     }    
@@ -48,11 +57,14 @@ SpaceType struct DataPoint
 
 SpaceType struct Cluster
 {
-    std::deque<DataPoint<dims, T>*> points;
 
-    Cluster() {}
+    long id;
 
-    void add(DataPoint<dims, T> *p)
+    std::deque<SharedData<dims, T>> points;
+
+    Cluster(long uid) : id(uid) {}
+
+    void add(SharedData<dims, T> p)
     {
         points.push_back(p);
     }    
@@ -60,20 +72,20 @@ SpaceType struct Cluster
 
 SpaceType struct Cell
 {
-    std::deque<DataPoint<dims, T>> data;
+    std::deque<SharedData<dims, T>> data;
 
-    bool can_host(DataPoint<dims, T> p, 
+    bool can_host(SharedData<dims, T> p, 
                   double dist,
-                  Cluster<dims, T>** c,
+                  Cluster<dims, T>* &c,
                   long &count)
     {
         return std::any_of(data.begin(), data.end(),
-            [&c, &p, &dist, &count, this] (DataPoint<dims, T> cell_point)
+            [&c, &p, &dist, &count, this] (SharedData<dims, T> cell_point)
             {
                 count++;
-                if (p.can_reach(&cell_point, dist))
+                if (p->can_reach(cell_point, dist))
                 {
-                    *c = cell_point.cluster;
+                    c = cell_point->cluster;
                     return true;                
                 }
                 return false;
@@ -83,15 +95,15 @@ SpaceType struct Cell
 
     Cell() {}
 
-    void add(DataPoint<dims, T> p)
+    void add(SharedData<dims, T> p)
     {
         data.push_back(p);
     }
 
-    Cluster<dims, T>* find_cluster(DataPoint<dims, T> p, double dist, long &count)
+    Cluster<dims, T>* find_cluster(SharedData<dims, T> p, double dist, long &count)
     {
         Cluster<dims, T>* cluster;
-        if (can_host(p, dist, &cluster, count))
+        if (can_host(p, dist, cluster, count))
         {
             return cluster;
         }
@@ -107,8 +119,10 @@ SpaceType class Space
 private:
     double max_dist;
     double cell_side_length;
+    double actual_cell_side;
     long last_search_count;
     long search_count_target;
+    long cluster_num;
     std::unordered_map<std::string, Cell<dims, T>> cells;
     
     std::array<size_t, dims> to_lattice(std::array<double, dims> &arr)
@@ -117,7 +131,7 @@ private:
         std::transform(arr.begin(), arr.end(), floored.begin(),
                 [this] (size_t coord)
                 {
-                    return floor(coord / this->cell_side_length);
+                    return floor(coord / this->actual_cell_side);
                 }
         );
         return floored; 
@@ -133,28 +147,23 @@ private:
         return oss.str();
     }
 
-    void add_point(DataPoint<dims, T> &p, std::string key)
-    {
-        cells[key].add(p);
-    }
-
     void divide_grid()
     {
         double excess_ratio =
             (double)last_search_count / (double)search_count_target;
-        while (excess_ratio > 1.0)
+        while (excess_ratio > 1.0 && actual_cell_side >= 2*cell_side_length)
         {
-            cell_side_length /= 2.0;
+            actual_cell_side /= 2.0;
             excess_ratio /= pow(2.0, dims);
         }
-        std::cout << "New cell side length: " << cell_side_length;
+        std::cout << "New cell side length: " << actual_cell_side;
         std::cout << " - reassigning points..." << std::endl;
         std::unordered_map<std::string, Cell<dims, T>> tmp;
         for (auto &cell : cells) 
         {
             for (auto &point : cell.second.data)
             {
-                auto lat = to_lattice(point.vec);
+                auto lat = to_lattice(point->vec);
                 std::string key = make_key(lat);
                 if (!tmp.count(key))
                 {
@@ -164,16 +173,22 @@ private:
                 tmp[key].add(point);
             }   
         } 
-        std::swap(tmp, cells);
+        cells.clear();
+        cells = tmp;
         std::cout << "Cell reassignment complete" << std::endl;
     }
 
 
 public:
-    std::vector<Cluster<dims, T>*> clusters;
+    std::unordered_map<long, Cluster<dims, T>*> clusters;
 
-    Space(long search_count_target, double cell_side_length, double max_dist) 
+    Space(long search_count_target, 
+          double cell_side_length,
+          double max_dist,
+          double upper_bound) 
     {
+        actual_cell_side = upper_bound;
+        cluster_num = 0;
         last_search_count = 0;
         this->max_dist = max_dist;
         this->search_count_target = search_count_target;
@@ -186,9 +201,9 @@ public:
 
     ~Space()
     {
-        for (size_t i = 0; i < clusters.size(); i++)
+        for (auto it = clusters.begin(); it != clusters.end(); ++it)
         {
-            delete clusters[i];
+            delete it->second;
         }
     }
 
@@ -231,12 +246,12 @@ public:
         return neighbors;
     }
 
-    std::set<Cluster<dims, T>*> find_clusters(DataPoint<dims, T> &p)
+    std::set<Cluster<dims, T>*> find_clusters(SharedData<dims, T> p)
     {
         long span = max_dist/cell_side_length;
         // Round the coordinates to get a cell location in terms of
         // the cell side lengths
-        std::array<size_t, dims> cell_loc = to_lattice(p.vec);
+        std::array<size_t, dims> cell_loc = to_lattice(p->vec);
         // Get all the neighboring cells. This means for each dimension,
         // we get the previous and next coordinate for a total of 3,
         // and all the possible choices form a square in 2 dimensions,
@@ -262,10 +277,9 @@ public:
             if (cells.count(key) && !searched.count(key))
             {
                 searched.insert(key);
-                auto cell = cells[key];
                 Cluster<dims, T>* cluster;
                 long count = 0;
-                if ((cluster = cell.find_cluster(p, max_dist, count)) != nullptr)
+                if ((cluster = cells[key].find_cluster(p, max_dist, count)) != nullptr)
                 {
                     result.insert(cluster);
                 }
@@ -275,42 +289,54 @@ public:
         return result;   
     }
 
-    long add(DataPoint<dims, T> &p)
+    /* Adds the data point to the space. Attempts to add the point to a
+     * pre-existing cluster, and if it is nearby to multiple clusters, it
+     * will merge those clusters. If it took more than the user defined
+     * number of points to be searched, the cells will be divided into
+     * smaller ones.  */
+    long add(DataPoint<dims, T> &point)
     {
-        auto lat = to_lattice(p.vec);
+        auto p = make_shared<DataPoint<dims, T>>(point.data);
+        p->vec = point.vec;
+        auto lat = to_lattice(p->vec);
         std::string key = make_key(lat);
         std::set<Cluster<dims, T>*> found = find_clusters(p);
-        Cluster<dims, T>* cluster = new Cluster<dims, T>();
+        Cluster<dims, T>* cluster = new Cluster<dims, T>(cluster_num++);
         switch (found.size())
         {
             case 0:
-                cluster->add(&p);
-                p.cluster = cluster;
-                clusters.push_back(cluster);
+                cluster->add(p);
+                p->cluster = cluster;
+                clusters[cluster->id] = cluster;
                 break;
             case 1:
                 delete cluster;
-                cluster = *found.begin();
-                cluster->add(&p);
-                p.cluster = cluster;
+                cluster_num--;
+                (*found.begin())->add(p);
+                p->cluster = (*found.begin());
                 break;
             default:
-                for (auto it : found)
+                for (auto it = found.begin(); it != found.end(); it++)
                 {
-                    for (auto &pt : it->points)
+                    for (auto pt : (*it)->points)
                     {
                         cluster->add(pt);
                         pt->cluster = cluster;
                     }
-                    delete it;
+
+                    clusters.erase(clusters.find((*it)->id));
+                    delete *it;
                 }
-                clusters.push_back(cluster); 
+                p->cluster = cluster;
+                cluster->add(p);
+                clusters[cluster->id] = cluster; 
         }
         cells[key].add(p);
-        if (last_search_count > search_count_target && cell_side_length > 2*max_dist)
+        if (last_search_count > search_count_target && actual_cell_side >= 2*cell_side_length)
         {
             std::cout << "Search count: " << last_search_count;
             std::cout << " - Target: " << search_count_target;
+            std::cout << " - Side: " << actual_cell_side;
             std::cout << " - Dividing..." << std::endl;
             divide_grid();
         }
