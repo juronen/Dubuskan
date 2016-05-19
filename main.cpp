@@ -20,7 +20,7 @@ int main()
     srand(0);
     std::cout << t << std::endl;
     Space<2, long> space(10, 100, 100, 1000);
-    for (long l = 0; l < 10000; l++)
+    for (long l = 0; l < 30000; l++)
     {
         long x = rand() % 1000;
         long y = rand() % 1000;
@@ -30,7 +30,7 @@ int main()
     int num = 0;
     for (auto &c : space.clusters)
     {
-        std::cout << num++ << ": " << c.second->points.size() << std::endl;
+        //std::cout << num++ << ": " << c.second->points.size() << std::endl;
     }
 
 }
