@@ -20,7 +20,7 @@ int main()
     srand(0);
     std::cout << t << std::endl;
     Space<2, long> space(10, 100, 100, 1000);
-    for (long l = 0; l < 30000; l++)
+    for (long l = 0; l < 10000; l++)
     {
         long x = rand() % 1000;
         long y = rand() % 1000;

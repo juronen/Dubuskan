@@ -3,6 +3,7 @@
 
 #define SpaceType template <size_t dims, typename T>
 
+#include <unordered_set>
 #include <list>
 #include <memory>
 #include <string>
@@ -246,7 +247,7 @@ public:
         return neighbors;
     }
 
-    std::set<Cluster<dims, T>*> find_clusters(SharedData<dims, T> p)
+    std::unordered_set<Cluster<dims, T>*> find_clusters(SharedData<dims, T> p)
     {
         long span = max_dist/cell_side_length;
         // Round the coordinates to get a cell location in terms of
@@ -268,8 +269,8 @@ public:
             }
         }
         auto neighbors = outer_product(opts, 2 * span + 1);
-        std::set<Cluster<dims, T>*> result;
-        std::set<std::string> searched;
+        std::unordered_set<Cluster<dims, T>*> result;
+        std::unordered_set<std::string> searched;
         last_search_count = 0;
         for (auto &neighbor : neighbors)
         {
@@ -300,7 +301,7 @@ public:
         p->vec = point.vec;
         auto lat = to_lattice(p->vec);
         std::string key = make_key(lat);
-        std::set<Cluster<dims, T>*> found = find_clusters(p);
+        std::unordered_set<Cluster<dims, T>*> found = find_clusters(p);
         Cluster<dims, T>* cluster = new Cluster<dims, T>(cluster_num++);
         switch (found.size())
         {
