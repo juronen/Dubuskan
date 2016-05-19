@@ -21,23 +21,6 @@ using std::size_t;
 using std::shared_ptr;
 using std::make_shared;
 
-namespace std
-{
-    template <>
-    struct hash<std::array<size_t, 2>>
-    {
-        size_t operator()(std::array<size_t, 2> &arr) const noexcept
-        {
-            size_t result = arr.size();
-            for (size_t i = 0; i < arr.size(); i++)
-            {
-                result *= result * 63 + arr[i];
-            }
-            return result;
-        }
-    };
-}
-
 SpaceType struct Cluster;
 SpaceType struct DataPoint;
 
