@@ -1,5 +1,5 @@
-#ifndef DUBUSKAN
-#define DUBUSKAN
+#ifndef DUBUSKAN_SPACE 
+#define DUBUSKAN_SPACE
 
 #define SpaceType template <size_t dims, typename T>
 
